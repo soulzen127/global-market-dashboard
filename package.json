@@ -1,0 +1,13 @@
+{
+  "name": "global-market-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Global market monitoring dashboard with login and user management.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

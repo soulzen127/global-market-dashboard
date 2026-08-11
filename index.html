@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Global Market Radar</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主要導覽">
+        <div class="sidebar-heading">
+          <div class="brand">
+            <div class="brand-mark">GM</div>
+            <div>
+              <strong>Global Market Radar</strong>
+              <span>即時市場監控</span>
+            </div>
+          </div>
+          <button id="hideLeftSidebar" class="sidebar-toggle" type="button" title="隱藏左側功能列" aria-label="隱藏左側功能列">‹</button>
+        </div>
+        <nav class="nav-list">
+          <a href="#dashboard" class="active">總覽</a>
+          <a href="#assets">資產監控</a>
+          <a href="#watchlists">自選群組</a>
+          <a href="#research">標的研究</a>
+          <a href="#trend">趨勢報表</a>
+          <a href="#alerts">警示中心</a>
+          <a href="#audit">系統報表</a>
+          <a href="#account">帳號管理</a>
+          <a href="#sources">資料源</a>
+        </nav>
+        <div class="status-panel">
+          <span class="pulse"></span>
+          <div>
+            <strong id="feedStatus">模擬即時連線</strong>
+            <span id="lastUpdate">等待更新</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Taiwan / US / Bonds / Commodities / Metals</p>
+            <h1>全球價格監控與<br class="mobile-break" />趨勢預測儀表板</h1>
+          </div>
+          <div class="top-actions">
+            <label class="search-box" for="searchInput">
+              <span>⌕</span>
+              <input id="searchInput" type="search" placeholder="搜尋代號、名稱或市場" />
+            </label>
+            <button id="exportBtn" class="icon-button" title="匯出目前報表">⇩</button>
+            <div class="user-control">
+              <button id="userMenuButton" class="user-button" type="button" title="帳號設定">
+                <span id="currentUserInitial">U</span>
+                <strong id="currentUserName">載入中</strong>
+              </button>
+              <button id="logoutButton" class="text-button secondary-button logout-button" type="button" title="登出">登出</button>
+            </div>
+          </div>
+        </header>
+
+        <div id="passwordWarning" class="security-warning" hidden>
+          <div>
+            <strong>基於安全考量，請立即修改初始密碼。</strong>
+            <span>完成修改後才建議正式使用系統。</span>
+          </div>
+          <a href="#account" class="text-button">前往修改</a>
+        </div>
+
+        <section id="dashboard" class="metric-grid" aria-label="市場總覽">
+          <article class="metric-card">
+            <span>監控資產</span>
+            <strong id="assetCount">0</strong>
+            <small>跨 5 大資產類別</small>
+          </article>
+          <article class="metric-card">
+            <span>上漲比例</span>
+            <strong id="gainRatio">0%</strong>
+            <small>以目前樣本估算</small>
+          </article>
+          <article class="metric-card">
+            <span>高波動標的</span>
+            <strong id="riskCount">0</strong>
+            <small>波動率高於門檻</small>
+          </article>
+          <article class="metric-card">
+            <span>預測偏多</span>
+            <strong id="bullishCount">0</strong>
+            <small>短期模型訊號</small>
+          </article>
+        </section>
+
+        <section class="panel market-panel" id="assets">
+          <div class="panel-header">
+            <div>
+              <h2>即時行情</h2>
+              <p>價格每 2 秒更新一次；目前為可替換資料層的模擬串流。</p>
+            </div>
+            <div class="segmented" role="tablist" aria-label="資產類別">
+              <button class="segment active" data-category="all">全部</button>
+              <button class="segment" data-category="tw">台股</button>
+              <button class="segment" data-category="us">美股</button>
+              <button class="segment" data-category="bond">債券</button>
+              <button class="segment" data-category="commodity">大宗物資</button>
+              <button class="segment" data-category="metal">貴金屬</button>
+            </div>
+          </div>
+
+          <div class="market-layout">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>標的</th>
+                    <th>市場</th>
+                    <th>價格</th>
+                    <th>漲跌</th>
+                    <th>波動</th>
+                    <th>訊號</th>
+                  </tr>
+                </thead>
+                <tbody id="assetRows"></tbody>
+              </table>
+            </div>
+
+            <aside class="detail-panel" aria-label="標的明細">
+              <div class="detail-title">
+                <div>
+                  <span id="selectedCategory">台股</span>
+                  <h3 id="selectedName">台積電</h3>
+                </div>
+                <strong id="selectedSymbol">2330.TW</strong>
+              </div>
+              <canvas id="trendCanvas" width="680" height="360" aria-label="價格趨勢圖"></canvas>
+              <div class="detail-stats">
+                <div><span>現價</span><strong id="selectedPrice">--</strong></div>
+                <div><span>24H 漲跌</span><strong id="selectedChange">--</strong></div>
+                <div><span>7D 預測</span><strong id="selectedForecast">--</strong></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="watchlists" class="panel watchlist-panel">
+          <div class="panel-header watchlist-heading">
+            <div>
+              <h2>自選投資群組</h2>
+              <p>建立不限數量的自訂群組，將股票、債券、商品與貴金屬放在同一張監控表比較。</p>
+            </div>
+            <form id="groupCreateForm" class="inline-form">
+              <input id="groupNameInput" type="text" maxlength="40" placeholder="輸入新群組名稱" required />
+              <button class="text-button" type="submit">建立群組</button>
+            </form>
+          </div>
+
+          <div class="watchlist-layout">
+            <aside class="group-sidebar">
+              <div class="section-label">我的群組</div>
+              <div id="groupList" class="group-list"></div>
+            </aside>
+
+            <div class="group-workspace">
+              <div id="groupEmptyState" class="empty-state">
+                建立群組後，即可加入跨市場投資標的並查看整體狀態。
+              </div>
+              <div id="groupContent" hidden>
+                <div class="group-toolbar">
+                  <div>
+                    <span class="section-label">目前群組</span>
+                    <h3 id="activeGroupName">未選擇</h3>
+                  </div>
+                  <div class="group-actions">
+                    <button id="renameGroupBtn" class="text-button secondary-button" type="button">重新命名</button>
+                    <button id="deleteGroupBtn" class="text-button danger-button" type="button">刪除群組</button>
+                  </div>
+                </div>
+
+                <div class="group-metrics">
+                  <div><span>群組標的</span><strong id="groupAssetCount">0</strong></div>
+                  <div><span>平均漲跌</span><strong id="groupAverageChange">0%</strong></div>
+                  <div><span>平均波動</span><strong id="groupAverageVolatility">0%</strong></div>
+                  <div><span>偏多標的</span><strong id="groupBullishCount">0</strong></div>
+                </div>
+
+                <details class="asset-picker">
+                  <summary>新增或移除投資標的</summary>
+                  <div class="picker-tools">
+                    <input id="groupAssetSearch" type="search" placeholder="搜尋代號、名稱或資產類別" />
+                    <button id="selectAllAssetsBtn" class="text-button secondary-button" type="button">全選結果</button>
+                    <button id="clearGroupAssetsBtn" class="text-button secondary-button" type="button">清空群組</button>
+                  </div>
+                  <div id="groupAssetPicker" class="asset-picker-grid"></div>
+                </details>
+
+                <div class="group-analysis-grid">
+                  <div>
+                    <div class="subsection-heading">
+                      <div>
+                        <h3>群組監控全覽</h3>
+                        <span>點選標的可進入歷史研究</span>
+                      </div>
+                    </div>
+                    <div class="table-wrap">
+                      <table class="group-table">
+                        <thead>
+                          <tr>
+                            <th>標的</th>
+                            <th>類別</th>
+                            <th>現價</th>
+                            <th>漲跌</th>
+                            <th>波動</th>
+                            <th>趨勢</th>
+                            <th>操作</th>
+                          </tr>
+                        </thead>
+                        <tbody id="groupAssetRows"></tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="subsection-heading">
+                      <div>
+                        <h3>標準化績效比較</h3>
+                        <span>以視窗起點設為 100</span>
+                      </div>
+                    </div>
+                    <canvas id="comparisonCanvas" width="900" height="360" aria-label="群組標準化績效比較圖"></canvas>
+                    <div id="comparisonLegend" class="chart-legend"></div>
+                  </div>
+                </div>
+
+                <div class="correlation-section">
+                  <div class="subsection-heading">
+                    <div>
+                      <h3>資產關聯性矩陣</h3>
+                      <span>最近 60 個資料點的報酬率相關係數，範圍 -1 至 +1</span>
+                    </div>
+                  </div>
+                  <div id="correlationMatrix" class="correlation-wrap"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="research" class="panel research-panel">
+          <div class="panel-header research-heading">
+            <div>
+              <h2>單一標的歷史研究</h2>
+              <p>縮放歷史區間、檢視特定資料點、查看關聯新聞，並建立可查詢的手動標註。</p>
+            </div>
+            <div class="research-selectors">
+              <select id="researchAsset" aria-label="選擇研究標的"></select>
+              <div class="segmented research-ranges" aria-label="歷史區間">
+                <button class="segment" data-range="30">1M</button>
+                <button class="segment" data-range="90">3M</button>
+                <button class="segment active" data-range="180">6M</button>
+                <button class="segment" data-range="365">1Y</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="research-toolbar">
+            <div class="zoom-controls" aria-label="圖表縮放">
+              <button id="zoomInBtn" class="icon-button" type="button" title="放大">＋</button>
+              <button id="zoomOutBtn" class="icon-button" type="button" title="縮小">−</button>
+              <button id="resetZoomBtn" class="text-button secondary-button" type="button">重設視窗</button>
+            </div>
+            <span id="researchWindowLabel">顯示最近 180 個資料點</span>
+          </div>
+
+          <div class="research-chart-wrap">
+            <canvas id="researchCanvas" width="1200" height="480" aria-label="歷史價格研究圖表"></canvas>
+            <div id="chartTooltip" class="chart-tooltip" hidden></div>
+          </div>
+
+          <div class="research-detail-grid">
+            <div class="point-inspector">
+              <div class="subsection-heading">
+                <div>
+                  <h3>資料點明細</h3>
+                  <span>點選圖表上的任一位置</span>
+                </div>
+              </div>
+              <div id="pointDetail" class="point-detail empty-state">尚未選擇資料點。</div>
+            </div>
+
+            <div class="news-panel">
+              <div class="subsection-heading">
+                <div>
+                  <h3>關聯新聞與事件</h3>
+                  <span>示範資料；正式環境可串接新聞 API</span>
+                </div>
+              </div>
+              <div id="relatedNews" class="news-list"></div>
+            </div>
+
+            <form id="annotationForm" class="annotation-form">
+              <div class="subsection-heading">
+                <div>
+                  <h3>特殊標註</h3>
+                  <span>標註會綁定目前選取的日期與價格</span>
+                </div>
+              </div>
+              <input id="annotationTitle" type="text" maxlength="60" placeholder="標註標題" required />
+              <select id="annotationType">
+                <option value="observation">觀察</option>
+                <option value="buy">投資/買進</option>
+                <option value="sell">減碼/賣出</option>
+                <option value="risk">風險事件</option>
+                <option value="news">手動新聞記錄</option>
+              </select>
+              <textarea id="annotationNote" rows="4" maxlength="500" placeholder="輸入判斷、事件、新聞來源或後續追蹤內容" required></textarea>
+              <input id="annotationUrl" type="url" placeholder="相關網址（選填）" />
+              <button class="text-button" type="submit">儲存標註</button>
+            </form>
+          </div>
+
+          <div class="annotation-history">
+            <div class="subsection-heading">
+              <div>
+                <h3>標註與投資記錄</h3>
+                <span id="annotationCount">0 筆</span>
+              </div>
+              <input id="annotationSearch" type="search" placeholder="搜尋標註內容" />
+            </div>
+            <div id="annotationList" class="annotation-list"></div>
+          </div>
+        </section>
+
+        <section id="trend" class="reports-grid">
+          <article class="panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>趨勢報表</h2>
+                <p>結合動能、均線、波動與類別輪動產生摘要。</p>
+              </div>
+              <button id="refreshReport" class="text-button">重新分析</button>
+            </div>
+            <div id="reportList" class="report-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>預測模型</h2>
+                <p>前端示範模型，正式環境可接 Python/ML API。</p>
+              </div>
+            </div>
+            <div class="model-controls">
+              <label>
+                預測天期
+                <input id="horizonInput" type="range" min="3" max="30" value="7" />
+                <span id="horizonValue">7 天</span>
+              </label>
+              <label>
+                風險門檻
+                <input id="riskInput" type="range" min="1" max="9" value="4" />
+                <span id="riskValue">4%</span>
+              </label>
+            </div>
+            <div class="model-output" id="modelOutput"></div>
+          </article>
+        </section>
+
+        <section id="alerts" class="panel alerts-panel">
+          <div class="panel-header">
+            <div>
+              <h2>警示中心</h2>
+              <p>設定價格、漲跌幅或風險訊號，到價後可串接 Email、LINE Notify、Slack 或 Webhook。</p>
+            </div>
+            <form id="alertForm" class="alert-form">
+              <input id="alertName" type="text" maxlength="40" placeholder="告警名稱" required />
+              <select id="alertAsset" aria-label="警示標的"></select>
+              <select id="alertRule" aria-label="警示規則">
+                <option value="above">價格高於</option>
+                <option value="below">價格低於</option>
+                <option value="change">漲跌幅超過</option>
+              </select>
+              <input id="alertLevelName" type="text" maxlength="20" value="Level-01" placeholder="階層名稱" required />
+              <input id="alertValue" type="number" step="0.01" placeholder="門檻" required />
+              <select id="alertSeverity" aria-label="告警等級">
+                <option value="watch">觀察</option>
+                <option value="warning">警戒</option>
+                <option value="critical">重大</option>
+              </select>
+              <button class="text-button" type="submit">新增</button>
+            </form>
+          </div>
+          <div id="alertList" class="alert-list"></div>
+        </section>
+
+        <section id="audit" class="panel audit-panel">
+          <div class="panel-header audit-heading">
+            <div>
+              <h2>系統操作與修改記錄</h2>
+              <p>查詢使用者操作、設定修改、警示異動與報表匯出記錄；資料保存在目前瀏覽器。</p>
+            </div>
+            <div class="audit-actions">
+              <button id="exportAuditBtn" class="text-button" type="button">匯出 CSV</button>
+              <button id="resetAuditBtn" class="text-button danger-button" type="button">清除記錄</button>
+            </div>
+          </div>
+
+          <form id="auditFilterForm" class="audit-filters">
+            <label>
+              關鍵字
+              <input id="auditKeyword" type="search" placeholder="操作、標的、內容或使用者" />
+            </label>
+            <label>
+              記錄類型
+              <select id="auditType">
+                <option value="all">全部類型</option>
+                <option value="view">查詢/檢視</option>
+                <option value="change">設定修改</option>
+                <option value="alert">警示異動</option>
+                <option value="export">報表匯出</option>
+                <option value="system">系統事件</option>
+              </select>
+            </label>
+            <label>
+              起始日期
+              <input id="auditStartDate" type="date" />
+            </label>
+            <label>
+              結束日期
+              <input id="auditEndDate" type="date" />
+            </label>
+            <button class="text-button" type="submit">查詢</button>
+            <button id="clearAuditFilters" class="text-button secondary-button" type="button">重設條件</button>
+          </form>
+
+          <div class="audit-metrics">
+            <div><span>查詢結果</span><strong id="auditResultCount">0</strong></div>
+            <div><span>設定修改</span><strong id="auditChangeCount">0</strong></div>
+            <div><span>警示異動</span><strong id="auditAlertCount">0</strong></div>
+            <div><span>報表匯出</span><strong id="auditExportCount">0</strong></div>
+          </div>
+
+          <div class="table-wrap audit-table-wrap">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>時間</th>
+                  <th>使用者</th>
+                  <th>類型</th>
+                  <th>操作</th>
+                  <th>對象</th>
+                  <th>內容</th>
+                  <th>異動</th>
+                </tr>
+              </thead>
+              <tbody id="auditRows"></tbody>
+            </table>
+          </div>
+          <p id="auditEmptyState" class="empty-state" hidden>目前沒有符合條件的操作記錄。</p>
+          <div class="audit-footer">
+            <span id="auditRangeText">顯示最近 100 筆記錄</span>
+            <button id="loadMoreAudit" class="text-button secondary-button" type="button">載入更多</button>
+          </div>
+        </section>
+
+        <section id="account" class="panel account-panel">
+          <div class="panel-header account-heading">
+            <div>
+              <h2>帳號與存取控制</h2>
+              <p>修改自己的密碼；管理員可建立、停用及重設系統使用者。</p>
+            </div>
+            <span id="currentRoleBadge" class="badge">載入中</span>
+          </div>
+
+          <div class="account-grid">
+            <form id="changePasswordForm" class="account-form">
+              <div>
+                <h3>修改我的密碼</h3>
+              <p>至少 10 碼，需包含大小寫英文、數字及特殊符號。</p>
+              </div>
+              <label>
+                目前密碼
+                <input id="currentPassword" type="password" autocomplete="current-password" required />
+              </label>
+              <label>
+                新密碼
+                <input id="newPassword" type="password" autocomplete="new-password" minlength="10" required />
+              </label>
+              <label>
+                確認新密碼
+                <input id="confirmPassword" type="password" autocomplete="new-password" minlength="10" required />
+              </label>
+              <p id="passwordMessage" class="form-message" hidden></p>
+              <button class="text-button" type="submit">更新密碼</button>
+            </form>
+
+            <div id="adminUserPanel" class="admin-user-panel" hidden>
+              <form id="createUserForm" class="account-form">
+                <div>
+                  <h3>建立使用者</h3>
+                  <p>新帳號首次登入後必須修改密碼。</p>
+                </div>
+                <label>
+                  帳號
+                  <input id="newUsername" type="text" minlength="3" maxlength="80" required />
+                </label>
+                <label>
+                  顯示名稱
+                  <input id="newDisplayName" type="text" maxlength="40" required />
+                </label>
+                <label>
+                  角色
+                  <select id="newUserRole">
+                    <option value="user">L2 使用者 User</option>
+                    <option value="supervisor">L1 最高權限 Supervisor</option>
+                  </select>
+                </label>
+                <label>
+                  初始密碼
+                  <input id="newUserPassword" type="password" minlength="10" autocomplete="new-password" required />
+                </label>
+                <p id="createUserMessage" class="form-message" hidden></p>
+                <button class="text-button" type="submit">建立帳號</button>
+              </form>
+
+              <div class="user-list-panel">
+                <div class="subsection-heading">
+                  <div>
+                    <h3>系統使用者</h3>
+                    <span id="userCount">0 個帳號</span>
+                  </div>
+                  <button id="refreshUsersButton" class="text-button secondary-button" type="button">重新整理</button>
+                </div>
+                <div id="systemUserList" class="system-user-list"></div>
+              </div>
+
+              <div class="user-list-panel">
+                <div class="subsection-heading">
+                  <div>
+                    <h3>帳號申請審核</h3>
+                    <span id="applicationCount">0 筆待審</span>
+                  </div>
+                  <button id="refreshApplicationsButton" class="text-button secondary-button" type="button">重新整理</button>
+                </div>
+                <div id="accountApplicationList" class="system-user-list"></div>
+              </div>
+
+              <form id="permissionForm" class="account-form permission-form">
+                <div>
+                  <h3>操作功能權限設定</h3>
+                  <p>只有 L1 Supervisor 可以調整各功能開放給 L1 或 L2。</p>
+                </div>
+                <div id="permissionList" class="permission-list"></div>
+                <p id="permissionMessage" class="form-message" hidden></p>
+                <button class="text-button" type="submit">儲存權限設定</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section id="sources" class="panel source-panel">
+          <div class="panel-header compact">
+            <div>
+              <h2>正式資料源架構</h2>
+              <p>上線時建議由後端統一處理授權、快取、頻率限制與資料正規化。</p>
+            </div>
+          </div>
+          <div class="source-grid">
+            <div><strong>台股</strong><span>證交所、櫃買中心、券商 API、FinMind</span></div>
+            <div><strong>美股</strong><span>Polygon、Finnhub、IEX Cloud、Interactive Brokers</span></div>
+            <div><strong>債券</strong><span>FRED、Treasury.gov、券商報價、Bloomberg/Refinitiv</span></div>
+            <div><strong>商品/金屬</strong><span>CME、LBMA、Metals-API、Quandl/Nasdaq Data Link</span></div>
+          </div>
+        </section>
+      </main>
+
+      <aside id="marketNewsRail" class="market-news-rail" aria-label="七日市場資訊">
+        <div class="rail-heading">
+          <button id="hideRightSidebar" class="sidebar-toggle" type="button" title="隱藏右側資訊列" aria-label="隱藏右側資訊列">›</button>
+          <div>
+            <span class="section-label">7 DAY MARKET CONTEXT</span>
+            <h2>市場資訊與新聞</h2>
+          </div>
+        </div>
+        <div class="rail-asset">
+          <div>
+            <span id="newsRailCategory">台股 · TWSE</span>
+            <h3 id="newsRailName">台積電</h3>
+          </div>
+          <strong id="newsRailSymbol">2330.TW</strong>
+        </div>
+        <div class="rail-summary">
+          <div><span>近七日變動</span><strong id="newsWeekChange">--</strong></div>
+          <div><span>七日高點</span><strong id="newsWeekHigh">--</strong></div>
+          <div><span>七日低點</span><strong id="newsWeekLow">--</strong></div>
+          <div><span>市場訊號</span><strong id="newsMarketSignal">--</strong></div>
+        </div>
+        <div class="rail-section-heading">
+          <div>
+            <h3>每日市場脈絡</h3>
+            <span>今天及以前一週</span>
+          </div>
+        </div>
+        <div id="weeklyMarketTimeline" class="market-timeline"></div>
+        <div class="rail-section-heading">
+          <div>
+            <h3>關聯新聞</h3>
+            <span>示範事件與即時搜尋入口</span>
+          </div>
+        </div>
+        <div id="weeklyNewsList" class="rail-news-list"></div>
+        <a id="liveNewsSearch" class="live-news-link" href="#" target="_blank" rel="noopener noreferrer">搜尋此標的即時新聞 ↗</a>
+      </aside>
+    </div>
+
+    <button id="showLeftSidebar" class="sidebar-reopen left-reopen" type="button" title="顯示左側功能列" aria-label="顯示左側功能列" hidden>›</button>
+    <button id="showRightSidebar" class="sidebar-reopen right-reopen" type="button" title="顯示右側資訊列" aria-label="顯示右側資訊列" hidden>‹</button>
+
+    <script src="app.js"></script>
+  </body>
+</html>

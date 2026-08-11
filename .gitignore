@@ -1,0 +1,5 @@
+.data/
+.auth-visual-test/
+.public-browser-check/
+cloudflared.exe
+*.png

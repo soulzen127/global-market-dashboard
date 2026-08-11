@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登入 | Global Market Radar</title>
+    <link rel="stylesheet" href="login.css" />
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-brand">
+        <div class="brand-mark">GM</div>
+        <p>GLOBAL MARKET RADAR</p>
+        <h1>全球市場監控系統</h1>
+        <span>台股、美股、債券、商品與貴金屬的統一監控工作區</span>
+      </section>
+      <section class="login-panel">
+        <div>
+          <p class="eyebrow">SECURE ACCESS</p>
+          <h2>登入系統</h2>
+          <p class="muted">已有帳號請登入；新使用者可送出申請，經 L1 Supervisor 同意後啟用。</p>
+        </div>
+        <form id="loginForm">
+          <label>
+            帳號
+            <input id="username" name="username" autocomplete="username" required autofocus />
+          </label>
+          <label>
+            密碼
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <p id="loginError" class="error" hidden></p>
+          <button id="loginButton" type="submit">登入</button>
+        </form>
+        <div class="login-help">
+          <strong>系統登入管制已啟用</strong>
+          <span>L1 Supervisor：soulzen127@gmail.com</span>
+          <span>忘記密碼或帳號未啟用時，請由 Supervisor 在帳號管理中處理。</span>
+        </div>
+        <div id="initialAccount" class="initial-account" hidden>
+          <strong>首次啟動管理員</strong>
+          <span>帳號：soulzen127@gmail.com</span>
+          <span>初始密碼：Chichi0902</span>
+          <small>此帳號為 L1 Supervisor 最高權限。</small>
+        </div>
+        <details class="access-request">
+          <summary>申請新帳號</summary>
+          <form id="requestAccountForm">
+            <label>
+              Email 帳號
+              <input id="requestUsername" name="requestUsername" type="email" autocomplete="username" required />
+            </label>
+            <label>
+              顯示名稱
+              <input id="requestDisplayName" name="requestDisplayName" maxlength="40" required />
+            </label>
+            <label>
+              申請密碼
+              <input id="requestPassword" name="requestPassword" type="password" autocomplete="new-password" minlength="10" required />
+            </label>
+            <label>
+              申請說明
+              <textarea id="requestNote" name="requestNote" rows="3" maxlength="300" placeholder="用途或申請原因"></textarea>
+            </label>
+            <p id="requestMessage" class="error" hidden></p>
+            <button id="requestButton" type="submit">送出申請</button>
+          </form>
+        </details>
+      </section>
+    </main>
+    <script src="login.js?v=20260808-auth2"></script>
+  </body>
+</html>

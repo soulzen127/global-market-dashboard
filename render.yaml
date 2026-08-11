@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: global-market-dashboard
+    env: node
+    plan: free
+    buildCommand: ""
+    startCommand: "npm start"
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATA_ROOT
+        value: /var/data
+    disk:
+      name: market-dashboard-data
+      mountPath: /var/data
+      sizeGB: 1

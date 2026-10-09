@@ -3,3 +3,11 @@
 .public-browser-check/
 cloudflared.exe
 *.png
+.env
+.env.*
+!.env.example
+node_modules/
+*.zip
+.vercel/
+.data-test*/
+test-results/

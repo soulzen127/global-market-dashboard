@@ -1,0 +1,18 @@
+#strategy { margin-block: 24px; padding-block: 24px; border-top: 1px solid var(--line); }
+#strategy h2 { font-size: 22px; }
+#strategy h3 { margin-top: 28px; font-size: 18px; }
+#strategy p { color: var(--muted); line-height: 1.6; }
+.strategy-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-block: 16px; }
+.strategy-form label { display: grid; gap: 6px; min-width: 0; }
+.strategy-form .wide { grid-column: 1 / -1; }
+.strategy-form input, .strategy-form textarea, .strategy-form select { width: 100%; min-width: 0; padding: 10px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.strategy-form textarea { min-height: 70px; }
+#strategy button { padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+.strategy-table { overflow-x: auto; }
+.strategy-table table { min-width: 640px; }
+.strategy-table td { max-width: 320px; overflow-wrap: anywhere; white-space: normal; }
+.topbar { flex-wrap: wrap; }
+.top-actions { flex-wrap: wrap; min-width: 0; }
+.workspace { min-width: 0; }
+.topbar h1 { font-size: 26px; letter-spacing: 0; }
+[hidden] { display: none !important; }

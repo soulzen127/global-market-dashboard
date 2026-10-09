@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const { databaseState, withDatabase } = require("./storage");
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -12,11 +13,15 @@ const USERS_FILE = path.join(DATA_ROOT, "users.json");
 const APPLICATIONS_FILE = path.join(DATA_ROOT, "account-applications.json");
 const PERMISSIONS_FILE = path.join(DATA_ROOT, "permissions.json");
 const MAIL_OUTBOX_FILE = path.join(DATA_ROOT, "mail-outbox.json");
+const SESSIONS_FILE = path.join(DATA_ROOT, "sessions.json");
+const WORKSPACES_FILE = path.join(DATA_ROOT, "workspaces.json");
+const SERVER_AUDIT_FILE = path.join(DATA_ROOT, "server-audit.json");
+const FAILURES_FILE = path.join(DATA_ROOT, "login-failures.json");
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const PUBLIC_FILES = new Set(["login.html", "login.css", "login.js"]);
 const SUPERVISOR_USERNAME = "soulzen127@gmail.com";
-const SUPERVISOR_PASSWORD = "Chichi0902";
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash("sha256").update(`${SUPERVISOR_USERNAME}:${SUPERVISOR_PASSWORD}`).digest("hex");
+const SUPERVISOR_PASSWORD = process.env.INITIAL_SUPERVISOR_PASSWORD;
+const PRIVATE_FILES = new Set(["index.html", "styles.css", "app.js", "strategy.js", "strategy.css", "portfolio.js"]);
 const DEFAULT_PERMISSIONS = {
   dashboard: "user",
   assets: "user",
@@ -26,13 +31,19 @@ const DEFAULT_PERMISSIONS = {
   alerts: "user",
   audit: "user",
   sources: "user",
+  strategy: "user",
   account: "user",
   accountManagement: "supervisor",
   permissionSettings: "supervisor",
   accountApplications: "supervisor"
 };
-const sessions = new Map();
-const loginFailures = new Map();
+const WORKSPACE_FEATURES = { groups: "watchlists", alerts: "alerts", annotations: "research", strategy: "strategy" };
+
+function recordServerAudit(user, action, target, status) {
+  const records = readJsonFile(SERVER_AUDIT_FILE, []);
+  records.push({ id: crypto.randomUUID(), timestamp: new Date().toISOString(), user: user?.username || "anonymous", type: "system", action, target, detail: `HTTP ${status}`, before: null, after: null });
+  saveJsonFile(SERVER_AUDIT_FILE, records);
+}
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -47,6 +58,7 @@ const MIME_TYPES = {
 };
 
 function ensureDataRoot() {
+  if (databaseState()) return;
   fs.mkdirSync(DATA_ROOT, { recursive: true });
 }
 
@@ -69,10 +81,7 @@ function testPassword(user, password) {
 }
 
 function readUsers() {
-  if (!fs.existsSync(USERS_FILE)) return [];
-  const content = fs.readFileSync(USERS_FILE, "utf8");
-  if (!content.trim()) return [];
-  const users = JSON.parse(content);
+  const users = readJsonFile(USERS_FILE, []);
   const normalized = [];
   const addUsersFromNode = (node) => {
     if (!node) return;
@@ -92,19 +101,25 @@ function readUsers() {
 
 function saveUsers(users) {
   ensureDataRoot();
-  fs.writeFileSync(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`, "utf8");
+  saveJsonFile(USERS_FILE, users);
 }
 
 function readJsonFile(filePath, fallback) {
+  const state = databaseState();
+  if (state) return structuredClone(state.values[path.basename(filePath)] ?? fallback);
   if (!fs.existsSync(filePath)) return fallback;
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
   if (!content.trim()) return fallback;
   return JSON.parse(content);
 }
 
 function saveJsonFile(filePath, value) {
+  const state = databaseState();
+  if (state) { state.values[path.basename(filePath)] = value; state.dirty = true; return; }
   ensureDataRoot();
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const temporaryPath = `${filePath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, filePath);
 }
 
 function normalizeRole(role) {
@@ -131,31 +146,24 @@ function savePermissions(permissions) {
 }
 
 function canAccess(user, feature) {
+  if (["accountManagement", "permissionSettings", "accountApplications"].includes(feature)) return isSupervisor(user);
   const required = getPermissions()[feature] || "user";
   return required === "supervisor" ? isSupervisor(user) : Boolean(user);
 }
 
 function initializeUsers() {
   ensureDataRoot();
+  if (databaseState()) return;
   if (fs.existsSync(USERS_FILE)) return;
-  const record = newPasswordRecord("Admin@2026!");
-  saveUsers([{
-    username: "admin",
-    displayName: "System Administrator",
-    role: "supervisor",
-    enabled: true,
-    forcePasswordChange: true,
-    ...record,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }]);
+  saveUsers([]);
 }
 
 function ensureSystemState() {
   let users = readUsers();
   let supervisor = users.find((user) => user.username === SUPERVISOR_USERNAME);
-  const record = newPasswordRecord(SUPERVISOR_PASSWORD);
   if (!supervisor) {
+    if (!SUPERVISOR_PASSWORD) throw new Error("Set INITIAL_SUPERVISOR_PASSWORD to provision the first supervisor.");
+    const record = newPasswordRecord(SUPERVISOR_PASSWORD);
     supervisor = {
       username: SUPERVISOR_USERNAME,
       displayName: "Steven Chang",
@@ -167,19 +175,12 @@ function ensureSystemState() {
       updatedAt: new Date().toISOString()
     };
     users.push(supervisor);
-  } else {
-    Object.assign(supervisor, record, {
-      role: "supervisor",
-      enabled: true,
-      forcePasswordChange: false,
-      updatedAt: new Date().toISOString()
-    });
   }
   users = users.map((user) => ({ ...user, role: normalizeRole(user.role) }));
   saveUsers(users);
-  if (!fs.existsSync(PERMISSIONS_FILE)) savePermissions(DEFAULT_PERMISSIONS);
-  if (!fs.existsSync(APPLICATIONS_FILE)) saveJsonFile(APPLICATIONS_FILE, []);
-  if (!fs.existsSync(MAIL_OUTBOX_FILE)) saveJsonFile(MAIL_OUTBOX_FILE, []);
+  if (!readJsonFile(PERMISSIONS_FILE, null)) savePermissions(DEFAULT_PERMISSIONS);
+  if (!readJsonFile(APPLICATIONS_FILE, null)) saveJsonFile(APPLICATIONS_FILE, []);
+  if (!readJsonFile(MAIL_OUTBOX_FILE, null)) saveJsonFile(MAIL_OUTBOX_FILE, []);
 }
 
 function publicUser(user) {
@@ -243,34 +244,24 @@ function parseCookies(header) {
   return cookies;
 }
 
-function signSessionPayload(payload) {
-  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
-}
-
 function createSessionToken(username) {
-  const payload = Buffer.from(JSON.stringify({
-    username,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-    nonce: crypto.randomBytes(12).toString("base64url")
-  })).toString("base64url");
-  return `v1.${payload}.${signSessionPayload(payload)}`;
+  const token = crypto.randomBytes(32).toString("base64url");
+  const stored = readJsonFile(SESSIONS_FILE, {});
+  for (const [key, session] of Object.entries(stored)) if (session.expiresAt <= Date.now()) delete stored[key];
+  stored[sessionKey(token)] = { username, expiresAt: Date.now() + SESSION_TTL_MS };
+  saveJsonFile(SESSIONS_FILE, stored);
+  return token;
 }
 
-function verifySessionToken(token) {
-  const parts = String(token || "").split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return null;
-  const [, payload, signature] = parts;
-  const expected = signSessionPayload(payload);
-  const actual = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (actual.length !== expectedBuffer.length || !crypto.timingSafeEqual(actual, expectedBuffer)) return null;
-  try {
-    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!session.username || Date.now() > Number(session.expiresAt)) return null;
-    return { username: session.username, expiresAt: Number(session.expiresAt), stateless: true };
-  } catch {
-    return null;
-  }
+function sessionKey(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function revokeSession(token) {
+  if (!token) return;
+  const stored = readJsonFile(SESSIONS_FILE, {});
+  delete stored[sessionKey(token)];
+  saveJsonFile(SESSIONS_FILE, stored);
 }
 
 function secureCookieSuffix(req) {
@@ -286,45 +277,44 @@ function clientKey(req) {
 }
 
 function rateLimitOk(key) {
-  const entry = loginFailures.get(key);
+  const entry = readJsonFile(FAILURES_FILE, {})[sessionKey(key)];
   if (!entry) return true;
   if (Date.now() > entry.resetAt) {
-    loginFailures.delete(key);
     return true;
   }
   return entry.count < 5;
 }
 
 function registerLoginFailure(key) {
-  const entry = loginFailures.get(key);
+  const failures = readJsonFile(FAILURES_FILE, {});
+  for (const [id, old] of Object.entries(failures)) if (Date.now() > old.resetAt) delete failures[id];
+  const entry = failures[sessionKey(key)];
   if (!entry || Date.now() > entry.resetAt) {
-    loginFailures.set(key, { count: 1, resetAt: Date.now() + 10 * 60 * 1000 });
+    failures[sessionKey(key)] = { count: 1, resetAt: Date.now() + 10 * 60 * 1000 };
   } else {
     entry.count += 1;
   }
+  saveJsonFile(FAILURES_FILE, failures);
 }
 
 function removeUserSessions(username) {
-  for (const [token, session] of sessions.entries()) {
-    if (session.username === username) sessions.delete(token);
-  }
+  const stored = readJsonFile(SESSIONS_FILE, {});
+  for (const [key, session] of Object.entries(stored)) if (session.username === username) delete stored[key];
+  saveJsonFile(SESSIONS_FILE, stored);
 }
 
 function currentUser(req) {
   const token = parseCookies(req.headers.cookie).gmr_session;
   if (!token) return null;
-  const session = sessions.get(token) || verifySessionToken(token);
+  const session = readJsonFile(SESSIONS_FILE, {})[sessionKey(token)];
   if (!session) return null;
   if (Date.now() > session.expiresAt) {
-    sessions.delete(token);
     return null;
   }
   const user = readUsers().find((candidate) => candidate.username === session.username && candidate.enabled);
   if (!user) {
-    sessions.delete(token);
     return null;
   }
-  if (!session.stateless) session.expiresAt = Date.now() + SESSION_TTL_MS;
   return user;
 }
 
@@ -351,7 +341,9 @@ function write(res, status, body = Buffer.alloc(0), contentType = "text/plain; c
   res.writeHead(status, {
     "Content-Type": contentType,
     "Content-Length": body.length,
-    "Cache-Control": "no-store",
+    "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -366,6 +358,11 @@ function redirect(res, location) {
 }
 
 function readJsonBody(req) {
+  if (req.body !== undefined) {
+    if (Buffer.byteLength(typeof req.body === "string" ? req.body : JSON.stringify(req.body)) > 1024 * 1024) return Promise.reject(Object.assign(new Error("Request too large"), { status: 413 }));
+    try { return Promise.resolve(typeof req.body === "string" ? JSON.parse(req.body) : req.body); }
+    catch { return Promise.reject(Object.assign(new Error("Invalid JSON"), { status: 400 })); }
+  }
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (chunk) => {
@@ -380,7 +377,7 @@ function readJsonBody(req) {
       try {
         resolve(JSON.parse(data));
       } catch (error) {
-        reject(error);
+        reject(Object.assign(error, { status: 400 }));
       }
     });
     req.on("error", reject);
@@ -392,6 +389,8 @@ async function handleApi(req, res, pathname, user) {
     return json(res, 200, {
       ok: true,
       service: "global-market-dashboard",
+      storage: process.env.DATABASE_URL ? "postgres" : "local-files",
+      marketData: "simulation",
       uptimeSeconds: Math.round(process.uptime()),
       checkedAt: new Date().toISOString()
     });
@@ -400,7 +399,7 @@ async function handleApi(req, res, pathname, user) {
   if (pathname === "/api/login" && req.method === "POST") {
     const payload = await readJsonBody(req);
     const username = String(payload.username || "").trim().toLowerCase();
-    const key = clientKey(req);
+    const key = `${clientKey(req)}:${username}`;
     if (!rateLimitOk(key)) return json(res, 429, { error: "Too many login attempts. Try again later." });
     const account = readUsers().find((candidate) => candidate.username === username);
     if (!account || !account.enabled || !testPassword(account, payload.password)) {
@@ -408,16 +407,17 @@ async function handleApi(req, res, pathname, user) {
       await new Promise((resolve) => setTimeout(resolve, 350));
       return json(res, 401, { error: "Invalid credentials or disabled account." });
     }
-    loginFailures.delete(key);
+    const failures = readJsonFile(FAILURES_FILE, {});
+    delete failures[sessionKey(key)];
+    saveJsonFile(FAILURES_FILE, failures);
     const token = createSessionToken(account.username);
-    sessions.set(token, { username: account.username, expiresAt: Date.now() + SESSION_TTL_MS });
     return json(res, 200, { user: publicUser(account) }, {
       "Set-Cookie": `gmr_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800${secureCookieSuffix(req)}`
     });
   }
 
   if (pathname === "/api/session" && req.method === "GET") {
-    return user ? json(res, 200, { user: publicUser(user) }) : json(res, 401, { error: "Authentication required." });
+    return user ? json(res, 200, { user: publicUser(user), permissions: getPermissions() }) : json(res, 401, { error: "Authentication required." });
   }
 
   if (pathname === "/api/bootstrap-status" && req.method === "GET") {
@@ -428,7 +428,7 @@ async function handleApi(req, res, pathname, user) {
       hasSupervisor,
       supervisorUsername: SUPERVISOR_USERNAME,
       loginPath: "/login.html",
-      initialPasswordActive: Boolean(admin && admin.forcePasswordChange && testPassword(admin, SUPERVISOR_PASSWORD))
+      initialPasswordActive: false
     });
   }
 
@@ -461,13 +461,59 @@ async function handleApi(req, res, pathname, user) {
 
   if (pathname === "/api/logout" && req.method === "POST") {
     const token = parseCookies(req.headers.cookie).gmr_session;
-    if (token) sessions.delete(token);
+    revokeSession(token);
     return json(res, 200, { success: true }, {
       "Set-Cookie": `gmr_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureCookieSuffix(req)}`
     });
   }
 
   if (!user) return json(res, 401, { error: "Session expired." });
+  if (user.forcePasswordChange && pathname !== "/api/change-password") return json(res, 403, { error: "Password change required." });
+
+  if (pathname === "/api/workspace" && req.method === "GET") {
+    const all = readJsonFile(WORKSPACES_FILE, {});
+    const data = all[user.username] || {};
+    return json(res, 200, { data: Object.fromEntries(Object.entries(data).filter(([key]) => WORKSPACE_FEATURES[key] && canAccess(user, WORKSPACE_FEATURES[key]))) });
+  }
+
+  if (pathname === "/api/workspace" && req.method === "PUT") {
+    const payload = await readJsonBody(req);
+    const feature = WORKSPACE_FEATURES[payload.key];
+    if (!feature || !Object.hasOwn(WORKSPACE_FEATURES, payload.key)) return json(res, 400, { error: "Invalid workspace section." });
+    if (!canAccess(user, feature)) return json(res, 403, { error: "Supervisor access required." });
+    if (payload.key !== "strategy" && !Array.isArray(payload.value)) return json(res, 400, { error: "Expected a list." });
+    if (payload.key === "strategy" && (!payload.value || typeof payload.value !== "object" || Array.isArray(payload.value))) return json(res, 400, { error: "Invalid strategy." });
+    if (payload.key === "strategy") {
+      const value = payload.value;
+      const lists = ["positions", "constituents", "decisions"];
+      if (lists.some((key) => !Array.isArray(value[key]))) return json(res, 400, { error: "Invalid strategy lists." });
+      for (const key of ["cashTwd", "concentrationLimit", "cashFloor"]) {
+        const number = Number(value[key] ?? "");
+        if (!Number.isFinite(number) || number < 0 || (key !== "cashTwd" && number > 100)) return json(res, 400, { error: "Invalid strategy threshold." });
+      }
+      if (value.decisions.some((d) => !d || typeof d !== "object" || Array.isArray(d))) return json(res, 400, { error: "Invalid decision." });
+      if (value.positions.some((p) => !p || typeof p.symbol !== "string" || !Number.isFinite(Number(p.marketValueTwd)) || Number(p.marketValueTwd) < 0)) return json(res, 400, { error: "Invalid position." });
+      if (value.constituents.some((c) => !c || typeof c.etf !== "string" || typeof c.company !== "string" || !Number.isFinite(Number(c.weight)) || Number(c.weight) < 0 || Number(c.weight) > 100)) return json(res, 400, { error: "Invalid ETF constituent." });
+      const totals = new Map();
+      for (const c of value.constituents) totals.set(c.etf, (totals.get(c.etf) || 0) + Number(c.weight));
+      if ([...totals.values()].some((weight) => weight > 100)) return json(res, 400, { error: "ETF weights exceed 100%." });
+    }
+    if (payload.key === "groups" && payload.value.some((g) => !g || typeof g.id !== "string" || typeof g.name !== "string" || !Array.isArray(g.symbols))) return json(res, 400, { error: "Invalid group." });
+    const all = readJsonFile(WORKSPACES_FILE, {});
+    const workspace = all[user.username] || {};
+    const version = workspace[payload.key]?.version || 0;
+    if (payload.version !== version) return json(res, 409, { error: "Workspace changed on another device. Reload before saving." });
+    workspace[payload.key] = { value: payload.value, version: version + 1, updatedAt: new Date().toISOString() };
+    all[user.username] = workspace;
+    saveJsonFile(WORKSPACES_FILE, all);
+    return json(res, 200, workspace[payload.key]);
+  }
+
+  if (pathname === "/api/audit" && req.method === "GET") {
+    if (!canAccess(user, "audit")) return json(res, 403, { error: "Supervisor access required." });
+    const records = readJsonFile(SERVER_AUDIT_FILE, []);
+    return json(res, 200, { records: records.filter((record) => isSupervisor(user) || record.user === user.username).reverse() });
+  }
 
   if (pathname === "/api/change-password" && req.method === "POST") {
     const payload = await readJsonBody(req);
@@ -480,7 +526,9 @@ async function handleApi(req, res, pathname, user) {
       updatedAt: new Date().toISOString()
     });
     saveUsers(users);
-    return json(res, 200, { user: publicUser(account) });
+    removeUserSessions(account.username);
+    const token = createSessionToken(account.username);
+    return json(res, 200, { user: publicUser(account) }, { "Set-Cookie": `gmr_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800${secureCookieSuffix(req)}` });
   }
 
   if (pathname === "/api/users" && req.method === "GET") {
@@ -516,7 +564,7 @@ async function handleApi(req, res, pathname, user) {
     if (!canAccess(user, "accountManagement")) return json(res, 403, { error: "Supervisor access required." });
     const payload = await readJsonBody(req);
     const username = String(payload.username || "").trim().toLowerCase();
-    if (username === user.username && !payload.enabled) return json(res, 400, { error: "Cannot disable the current account." });
+    if ((username === user.username || username === SUPERVISOR_USERNAME) && !payload.enabled) return json(res, 400, { error: "Cannot disable the current account." });
     const users = readUsers();
     const account = users.find((candidate) => candidate.username === username);
     if (!account) return json(res, 404, { error: "User not found." });
@@ -549,7 +597,7 @@ async function handleApi(req, res, pathname, user) {
     if (!canAccess(user, "accountManagement")) return json(res, 403, { error: "Supervisor access required." });
     const payload = await readJsonBody(req);
     const username = String(payload.username || "").trim().toLowerCase();
-    if (username === user.username) return json(res, 400, { error: "Cannot delete the current account." });
+    if (username === user.username || username === SUPERVISOR_USERNAME) return json(res, 400, { error: "Cannot delete the current account." });
     const users = readUsers();
     if (!users.some((candidate) => candidate.username === username)) return json(res, 404, { error: "User not found." });
     saveUsers(users.filter((candidate) => candidate.username !== username));
@@ -617,6 +665,7 @@ function serveStatic(req, res, pathname, user) {
     return json(res, 403, { error: "Forbidden." });
   }
   const isPublic = PUBLIC_FILES.has(relativePath);
+  if (!isPublic && !PRIVATE_FILES.has(relativePath)) return json(res, 404, { error: "Resource not found." });
   if (!isPublic && !user) return redirect(res, "/login.html");
   if (relativePath === "login.html" && user) return redirect(res, "/");
 
@@ -627,21 +676,43 @@ function serveStatic(req, res, pathname, user) {
   write(res, 200, req.method === "HEAD" ? Buffer.alloc(0) : fs.readFileSync(filePath), MIME_TYPES[ext] || "application/octet-stream");
 }
 
-initializeUsers();
-ensureSystemState();
+if (IS_VERCEL && !process.env.DATABASE_URL) throw new Error("Configure DATABASE_URL for durable Vercel storage.");
+if (process.env.RENDER && !process.env.DATABASE_URL && !process.env.DATA_ROOT) throw new Error("Configure DATABASE_URL or a persistent DATA_ROOT before cloud deployment.");
+if (!process.env.DATABASE_URL) { initializeUsers(); ensureSystemState(); }
 
 async function handler(req, res) {
   try {
+    const response = await withDatabase(async () => {
+    if (databaseState() && !readUsers().length) ensureSystemState();
+    // Commit database mutations before returning cookies or a success response.
+    const buffered = { statusCode: 200, headersSent: false, body: Buffer.alloc(0), headers: {}, writeHead(status, headers) { this.statusCode = status; this.headers = headers; }, end(body) { this.body = body; this.headersSent = true; } };
+    await routeRequest(req, buffered);
+    return buffered;
+    });
+    res.writeHead(response.statusCode, response.headers);
+    res.end(response.body);
+  } catch (error) {
+    console.error("Request failed:", error.name);
+    if (!res.headersSent) json(res, error.status || 503, { error: error.status === 400 ? "Invalid JSON." : "Service temporarily unavailable. Please retry." });
+  }
+}
+
+async function routeRequest(req, res) {
+  try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && req.headers.origin) {
+      const origin = new URL(req.headers.origin);
+      if (origin.host !== req.headers.host) return json(res, 403, { error: "Origin not allowed." });
+    }
     const user = currentUser(req);
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname, user);
     } else {
       serveStatic(req, res, url.pathname, user);
     }
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) recordServerAudit(user, req.method, url.pathname, res.statusCode);
   } catch (error) {
-    console.error(error);
-    if (!res.headersSent) json(res, 500, { error: "Internal server error." });
+    throw error;
   }
 }
 

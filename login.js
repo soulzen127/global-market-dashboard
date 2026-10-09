@@ -8,6 +8,7 @@ const requestForm = document.querySelector("#requestAccountForm");
 const requestMessage = document.querySelector("#requestMessage");
 const requestButton = document.querySelector("#requestButton");
 const LOGIN_DESTINATION = "/";
+const CACHE_REFRESH_KEY = "gmr-login-cache-refresh-v1";
 const errorTranslations = {
   "Invalid credentials or disabled account.": "帳號或密碼錯誤，或帳號已停用。",
   "Too many login attempts. Try again later.": "登入失敗次數過多，請稍後再試。",
@@ -18,8 +19,10 @@ const errorTranslations = {
 };
 
 async function clearStaleAppShell() {
+  let hadServiceWorkerController = false;
   try {
     if ("serviceWorker" in navigator) {
+      hadServiceWorkerController = Boolean(navigator.serviceWorker.controller);
       const registrations = await navigator.serviceWorker.getRegistrations();
       await Promise.all(registrations.map((registration) => registration.unregister()));
     }
@@ -30,6 +33,7 @@ async function clearStaleAppShell() {
   } catch {
     // Cache cleanup is best-effort; login must continue even if the browser denies it.
   }
+  return hadServiceWorkerController;
 }
 
 async function readJsonResponse(response) {
@@ -45,20 +49,45 @@ async function verifyAuthenticatedSession() {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
+    signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) return false;
   const result = await readJsonResponse(response);
   return Boolean(result.user?.username);
 }
 
-clearStaleAppShell();
+async function initializeLoginPage() {
+  const hadServiceWorkerController = await clearStaleAppShell();
+  if (hadServiceWorkerController && !new URL(location.href).searchParams.has("fresh")) {
+    const freshUrl = new URL(location.href);
+    freshUrl.searchParams.set("fresh", "1");
+    window.location.replace(freshUrl.href);
+    return;
+  }
 
-fetch("/api/bootstrap-status")
-  .then((response) => response.json())
-  .then((result) => {
+  const alreadyAuthenticated = await verifyAuthenticatedSession();
+  if (alreadyAuthenticated) {
+    window.location.replace(LOGIN_DESTINATION);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/bootstrap-status", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const result = await readJsonResponse(response);
     initialAccount.hidden = !result.initialPasswordActive || result.setupRequired === false;
-  })
-  .catch(() => {});
+  } catch {
+    initialAccount.hidden = true;
+  }
+}
+
+initializeLoginPage().catch(() => {
+  errorBox.textContent = "目前無法連線至登入服務，請稍後重試。";
+  errorBox.hidden = false;
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -71,6 +100,7 @@ form.addEventListener("submit", async (event) => {
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
+      signal: AbortSignal.timeout(15000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         username: usernameInput.value.trim(),
@@ -81,9 +111,9 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(errorTranslations[result.error] || result.error || "登入失敗。");
     const sessionReady = await verifyAuthenticatedSession();
     if (!sessionReady) {
-      throw new Error("登入已驗證，但瀏覽器未保留登入狀態。請確認使用 http://127.0.0.1:8080/login.html 開啟，並允許 Cookie。");
+      throw new Error("登入已驗證，但未能讀取登入狀態。請允許此網站的 Cookie 後重試。");
     }
-    window.location.assign(LOGIN_DESTINATION);
+    window.location.replace(LOGIN_DESTINATION);
   } catch (error) {
     errorBox.textContent = error.message;
     errorBox.hidden = false;
@@ -115,7 +145,7 @@ requestForm.addEventListener("submit", async (event) => {
     const result = await readJsonResponse(response);
     if (!response.ok) throw new Error(errorTranslations[result.error] || result.error || "申請送出失敗。");
     requestForm.reset();
-    requestMessage.textContent = "帳號申請已送出，系統已通知 L1 Supervisor 審核。";
+    requestMessage.textContent = "帳號申請已送出，等待 L1 Supervisor 審核。通知郵件仍待寄送。";
     requestMessage.classList.add("success");
     requestMessage.hidden = false;
   } catch (error) {

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Global Market Radar</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="strategy.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -23,6 +24,7 @@
           <a href="#dashboard" class="active">總覽</a>
           <a href="#assets">資產監控</a>
           <a href="#watchlists">自選群組</a>
+          <a href="#strategy">我的投資策略</a>
           <a href="#research">標的研究</a>
           <a href="#trend">趨勢報表</a>
           <a href="#alerts">警示中心</a>
@@ -40,6 +42,7 @@
       </aside>
 
       <main class="workspace">
+        <p id="syncStatus" role="status">正在連線...</p>
         <header class="topbar">
           <div>
             <p class="eyebrow">Taiwan / US / Bonds / Commodities / Metals</p>
@@ -92,6 +95,7 @@
           </article>
         </section>
 
+        <section id="strategy" aria-label="我的投資策略"></section>
         <section class="panel market-panel" id="assets">
           <div class="panel-header">
             <div>
@@ -616,6 +620,8 @@
     <button id="showLeftSidebar" class="sidebar-reopen left-reopen" type="button" title="顯示左側功能列" aria-label="顯示左側功能列" hidden>›</button>
     <button id="showRightSidebar" class="sidebar-reopen right-reopen" type="button" title="顯示右側資訊列" aria-label="顯示右側資訊列" hidden>‹</button>
 
+    <script src="portfolio.js"></script>
+    <script src="strategy.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

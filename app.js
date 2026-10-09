@@ -23,6 +23,11 @@ let GROUP_INITIALIZED_KEY = STORAGE_KEYS.groupsInitialized;
 let ANNOTATION_STORAGE_KEY = STORAGE_KEYS.annotations;
 let CURRENT_USER = "unknown";
 let AUTH_USER = null;
+let workspaceReady = false;
+let workspaceVersions = {};
+let workspaceSaveQueue = Promise.resolve();
+let workspaceSaveFailed = false;
+let featurePermissions = {};
 const CHART_COLORS = ["#5cc8ff", "#27c083", "#f4b740", "#ff5f6d", "#a78bfa", "#fb923c", "#2dd4bf", "#f472b6"];
 
 const assets = [
@@ -199,6 +204,38 @@ function saveStoredJson(key, value) {
   } catch (error) {
     console.warn(`無法儲存 ${key}`, error);
   }
+  const section = Object.entries({ groups: GROUP_STORAGE_KEY, alerts: ALERT_STORAGE_KEY, annotations: ANNOTATION_STORAGE_KEY }).find(([, storageKey]) => storageKey === key)?.[0];
+  if (workspaceReady && section) queueWorkspaceSave(section, value);
+}
+
+function queueWorkspaceSave(key, value) {
+  const snapshot = JSON.parse(JSON.stringify(value));
+  workspaceSaveQueue = workspaceSaveQueue.then(async () => {
+    if (workspaceSaveFailed) throw new Error("保存已暫停，請先備份本機資料後重新載入。");
+    const saved = await apiRequest("/api/workspace", { method: "PUT", body: JSON.stringify({ key, value: snapshot, version: workspaceVersions[key] || 0 }) });
+    workspaceVersions[key] = saved.version;
+    document.querySelector("#syncStatus").textContent = "資料已保存";
+  }).catch((error) => {
+    workspaceSaveFailed = true;
+    document.querySelector("#syncStatus").textContent = `尚未保存：${error.message}`;
+  });
+  document.querySelector("#syncStatus").textContent = "保存中...";
+  return workspaceSaveQueue;
+}
+
+async function loadWorkspace() {
+  const result = await apiRequest("/api/workspace");
+  workspaceVersions = Object.fromEntries(Object.entries(result.data).map(([key, entry]) => [key, entry.version]));
+  if (result.data.groups) investmentGroups = result.data.groups.value;
+  if (result.data.alerts) alerts = result.data.alerts.value;
+  if (result.data.annotations) annotations = result.data.annotations.value;
+  activeGroupId = investmentGroups[0]?.id || null;
+  saveStoredJson(GROUP_STORAGE_KEY, investmentGroups);
+  saveStoredJson(ALERT_STORAGE_KEY, alerts);
+  saveStoredJson(ANNOTATION_STORAGE_KEY, annotations);
+  workspaceReady = true;
+  document.querySelector("#syncStatus").textContent = "資料已載入";
+  return result.data;
 }
 
 function loadLayoutState() {
@@ -222,6 +259,9 @@ function updateLayoutState(side, collapsed) {
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15000),
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -258,6 +298,8 @@ function translateApiError(message) {
     "Too many login attempts. Try again later.": "登入失敗次數過多，請稍後再試。",
     "Application not found.": "找不到待審申請。",
     "Application already pending.": "此帳號已有待審申請。",
+    "Password change required.": "請先在帳號管理變更初始密碼。",
+    "Workspace changed on another device. Reload before saving.": "其他裝置已修改資料，請先匯出備份，再重新整理。",
   }[message] || message;
 }
 
@@ -314,11 +356,19 @@ function scopeStorageForUser(username) {
 
 async function initializeAuthentication() {
   const result = await apiRequest("/api/session");
+  featurePermissions = result.permissions || {};
   applyAuthenticatedUser(result.user);
+  for (const [feature, role] of Object.entries(featurePermissions)) {
+    if (role === "supervisor" && !isSupervisor()) {
+      document.getElementById(feature)?.setAttribute("hidden", "");
+      document.querySelector(`a[href="#${feature}"]`)?.setAttribute("hidden", "");
+    }
+  }
   if (isSupervisor(result.user)) {
-    await loadSystemUsers();
-    await loadAccountApplications();
-    await loadPermissions();
+    const results = await Promise.allSettled([loadSystemUsers(), loadAccountApplications(), loadPermissions()]);
+    if (results.some((entry) => entry.status === "rejected")) {
+      showFormMessage(els.createUserMessage, "部分管理資料暫時無法載入，請重新整理。", true);
+    }
   }
 }
 
@@ -1611,7 +1661,8 @@ function downloadFile(filename, content, type) {
 
 function csvCell(value) {
   const normalized = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? "");
-  return `"${normalized.replaceAll('"', '""')}"`;
+  const safe = /^[\s]*[=+@-]/.test(normalized) ? `'${normalized}` : normalized;
+  return `"${safe.replaceAll('"', '""')}"`;
 }
 
 document.querySelectorAll(".segment").forEach((button) => {
@@ -1914,15 +1965,19 @@ document.querySelector("#userMenuButton").addEventListener("click", () => {
 
 document.querySelector("#logoutButton").addEventListener("click", async () => {
   try {
+    await workspaceSaveQueue;
     recordAudit("system", "登出系統", "Global Market Radar", "使用者主動登出系統。");
     await apiRequest("/api/logout", { method: "POST" });
-  } finally {
-    window.location.replace("/login.html");
+  } catch (error) {
+    window.alert(`登出失敗：${error.message}`);
+    return;
   }
+    window.location.replace("/login.html");
 });
 
 els.changePasswordForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const completingInitialPassword = Boolean(AUTH_USER.forcePasswordChange);
   els.passwordMessage.hidden = true;
   if (els.newPassword.value !== els.confirmPassword.value) {
     showFormMessage(els.passwordMessage, "兩次輸入的新密碼不一致。", true);
@@ -1937,6 +1992,10 @@ els.changePasswordForm.addEventListener("submit", async (event) => {
       }),
     });
     applyAuthenticatedUser(result.user);
+    if (completingInitialPassword) {
+      location.replace("/");
+      return;
+    }
     els.changePasswordForm.reset();
     showFormMessage(els.passwordMessage, "密碼已成功更新。");
     recordAudit("change", "修改登入密碼", CURRENT_USER, "使用者更新自己的登入密碼。");
@@ -2031,14 +2090,29 @@ els.showRightSidebar.addEventListener("click", () => {
 async function initializeApplication() {
   try {
     await initializeAuthentication();
+    if (AUTH_USER.forcePasswordChange) {
+      document.querySelectorAll("main > section").forEach((section) => { section.hidden = section.id !== "account"; });
+      location.hash = "account";
+      return;
+    }
+    const workspace = await loadWorkspace();
     loadLayoutState();
-    seedAuditLogs();
-    seedInvestmentGroups();
+    if (!workspace.groups && !investmentGroups.length) seedInvestmentGroups();
+    if (!workspace.groups && investmentGroups.length) queueWorkspaceSave("groups", investmentGroups);
+    if (!workspace.alerts && alerts.length) queueWorkspaceSave("alerts", alerts);
+    if (!workspace.annotations && annotations.length) queueWorkspaceSave("annotations", annotations);
+    const serverAudit = await apiRequest("/api/audit").catch(() => ({ records: [] }));
+    auditLogs = [...serverAudit.records, ...auditLogs].filter((record, index, list) => list.findIndex((other) => other.id === record.id) === index);
     recordAudit("system", "開啟系統", "Global Market Radar", "使用者進入市場監控儀表板。");
     renderAll();
+    if (window.initializeStrategy) window.initializeStrategy(workspace.strategy?.value);
     setInterval(updatePrices, 2000);
   } catch (error) {
     console.error(error);
+    const notice = document.createElement("p");
+    notice.setAttribute("role", "alert");
+    notice.textContent = "系統初始化失敗，請重新整理或回登入頁重試。";
+    document.body.prepend(notice);
   }
 }
 

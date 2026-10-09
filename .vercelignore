@@ -1,0 +1,17 @@
+*
+!api/
+!api/index.js
+!package.json
+!pnpm-lock.yaml
+!vercel.json
+!server.js
+!storage.js
+!index.html
+!login.html
+!login.js
+!login.css
+!app.js
+!styles.css
+!strategy.js
+!strategy.css
+!portfolio.js

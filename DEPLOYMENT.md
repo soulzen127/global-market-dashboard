@@ -1,5 +1,7 @@
 # Internet Deployment
 
+> Updated 2026-10-09: see SYSTEM_HEALTH_2026-10-09.md for the current release status. The free deployment target is Vercel plus external PostgreSQL. The older Render persistent-disk instructions below describe a paid-disk alternative, not the current free render.yaml configuration. Install dependencies with `npm install --omit=dev` before starting Node.
+
 This project now has a production-style Node.js server (`server.js`) in addition to the local PowerShell server.
 
 ## Recommended Hosting
@@ -45,11 +47,6 @@ Then publish the server through your host firewall, reverse proxy, or cloud prov
 
 ## First Login
 
-If no `.data/users.json` exists on the deployed server, the app creates:
-
-- Username: `admin`
-- Password: `Admin@2026!`
-
-The account is forced to change password after first login.
+For a new database, set `INITIAL_SUPERVISOR_PASSWORD` securely in the host environment to provision `soulzen127@gmail.com`. There is no built-in default password. Existing users are preserved without resetting their passwords.
 
 If you want to keep the existing local users, copy `.data/users.json` into the deployed persistent data directory before starting the service.

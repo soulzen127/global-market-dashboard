@@ -1,7 +1,9 @@
 FROM node:22-alpine
 
 WORKDIR /app
-COPY package.json server.js index.html login.html login.css login.js app.js styles.css ./
+COPY package.json ./
+RUN npm install --omit=dev
+COPY server.js storage.js portfolio.js strategy.js strategy.css index.html login.html login.css login.js app.js styles.css ./
 RUN mkdir -p /app/.data
 
 ENV NODE_ENV=production

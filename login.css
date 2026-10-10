@@ -73,7 +73,7 @@ body {
 
 h1 {
   margin: 8px 0 12px;
-  font-size: clamp(34px, 5vw, 58px);
+  font-size: 36px;
   line-height: 1.08;
 }
 
@@ -210,6 +210,24 @@ button:disabled {
   }
 
   .login-brand {
-    min-height: 300px;
+    min-height: 0;
   }
+}
+
+/* A compact entry screen leaves the form within reach on a phone. */
+.login-brand, .login-panel { min-width: 0; }
+.login-help, .error, .muted { overflow-wrap: anywhere; }
+input, textarea { min-width: 0; font-size: 16px; }
+button, summary { touch-action: manipulation; min-height: 44px; }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+@media (max-width: 720px) {
+  body { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); align-items: start; min-height: 100dvh; }
+  .login-shell { min-height: 0; }
+  .login-brand, .login-panel { padding: 20px; }
+  .login-brand { background: #0a1018; border-bottom: 1px solid var(--line); }
+  .login-brand .brand-mark, .login-brand > p, .login-brand > span { display: none; }
+  h1 { font-size: 24px; margin: 0; line-height: 1.4; }
+  h2 { font-size: 22px; }
+  form { margin-top: 12px; }
+  .login-help { font-size: 13px; }
 }

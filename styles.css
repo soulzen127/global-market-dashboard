@@ -391,7 +391,7 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(28px, 4vw, 46px);
+  font-size: 26px;
   letter-spacing: 0;
   max-width: 100%;
   overflow-wrap: anywhere;

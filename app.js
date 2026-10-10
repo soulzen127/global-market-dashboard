@@ -54,6 +54,11 @@ const assets = [
 }));
 
 let selectedAsset = assets[0];
+window.getInstrumentCatalog = () => [
+  ...assets.map(({ symbol, name, market, category, currency }) => ({ symbol, name, market, currency, categoryLabel: categories[category], kind: ["SPY", "TLT"].includes(symbol) ? "etf" : "stock" })),
+  { symbol: "2308.TW", name: "台達電", market: "TWSE", categoryLabel: "台股", currency: "TWD", kind: "stock" },
+  { symbol: "00850.TW", name: "元大臺灣ESG永續", market: "TWSE", categoryLabel: "台股", currency: "TWD", kind: "etf" }
+];
 let activeCategory = "all";
 let alerts = loadStoredJson(ALERT_STORAGE_KEY, [
   { name: "NVDA 波動監測", symbol: "NVDA", rule: "change", levels: [{ name: "Level-01", value: 3.5, severity: "watch" }] },
@@ -209,6 +214,7 @@ function saveStoredJson(key, value) {
 }
 
 function queueWorkspaceSave(key, value) {
+  if (AUTH_USER?.tenantRole === "viewer") return Promise.resolve();
   const snapshot = JSON.parse(JSON.stringify(value));
   workspaceSaveQueue = workspaceSaveQueue.then(async () => {
     if (workspaceSaveFailed) throw new Error("保存已暫停，請先備份本機資料後重新載入。");
@@ -226,9 +232,9 @@ function queueWorkspaceSave(key, value) {
 async function loadWorkspace() {
   const result = await apiRequest("/api/workspace");
   workspaceVersions = Object.fromEntries(Object.entries(result.data).map(([key, entry]) => [key, entry.version]));
-  if (result.data.groups) investmentGroups = result.data.groups.value;
-  if (result.data.alerts) alerts = result.data.alerts.value;
-  if (result.data.annotations) annotations = result.data.annotations.value;
+  investmentGroups = result.data.groups?.value || [];
+  alerts = result.data.alerts?.value || [];
+  annotations = result.data.annotations?.value || [];
   activeGroupId = investmentGroups[0]?.id || null;
   saveStoredJson(GROUP_STORAGE_KEY, investmentGroups);
   saveStoredJson(ALERT_STORAGE_KEY, alerts);
@@ -284,6 +290,10 @@ async function apiRequest(path, options = {}) {
 
 function translateApiError(message) {
   return {
+    "Read-only account.": "A3 為唯讀角色，無法修改帳戶內容。",
+    "Invalid tenant role.": "請選擇 A1、A2 或 A3 權限。",
+    "Cannot change this owner role.": "不可修改目前登入者或受保護管理者的權限。",
+    "Cannot remove the last owner.": "帳戶必須保留至少一位啟用中的 A1 管理者。",
     "Authentication required.": "請先登入系統。",
     "Session expired.": "登入狀態已失效。",
     "Password policy not satisfied.": "密碼至少 10 碼，且需包含大小寫英文、數字及特殊符號。",
@@ -312,21 +322,53 @@ function showFormMessage(element, message, isError = false) {
 function applyAuthenticatedUser(user) {
   AUTH_USER = user;
   CURRENT_USER = user.username;
-  scopeStorageForUser(user.username);
+  scopeStorageForUser(`${user.tenantId}:${user.username}`);
   els.currentUserName.textContent = user.displayName || user.username;
   els.currentUserInitial.textContent = (user.displayName || user.username).slice(0, 1).toUpperCase();
-  els.currentRoleBadge.textContent = getRoleLabel(user.role);
+  els.currentRoleBadge.textContent = `${user.tenantName} · ${user.roleLabel}${user.platformAdmin ? " · 系統審核管理員" : ""}`;
   els.currentRoleBadge.className = `badge ${isSupervisor(user) ? "bullish" : ""}`;
   els.passwordWarning.hidden = !user.forcePasswordChange;
   els.adminUserPanel.hidden = !isSupervisor(user);
+  document.querySelector('#tenantNameInput').value = user.tenantName || "";
+  els.accountApplicationList.closest(".user-list-panel").hidden = !user.platformAdmin;
 }
 
 function isSupervisor(user = AUTH_USER) {
   return user?.role === "supervisor" || user?.role === "admin";
 }
 
+function applyReadOnlyControls() {
+  if (AUTH_USER?.tenantRole !== "viewer") return;
+  document.querySelectorAll('#strategy form, #groupCreateForm, #alertForm, #annotationForm').forEach((form) => {
+    form.querySelectorAll('input, textarea, select, button').forEach((control) => { control.disabled = true; });
+  });
+  document.querySelectorAll('#renameGroupBtn, #deleteGroupBtn, .asset-picker input, .asset-picker button, [data-remove-alert], [data-remove-alert-level], [data-delete-annotation], [data-remove-position], [data-remove-constituent]').forEach((control) => { control.disabled = true; });
+}
+new MutationObserver(applyReadOnlyControls).observe(document.querySelector('main'), { childList: true, subtree: true });
+els.systemUserList.addEventListener("change", async (event) => {
+  const select = event.target.closest("[data-member-role]");
+  if (!select) return;
+  select.disabled = true;
+  try {
+    await apiRequest("/api/users/role", { method: "POST", body: JSON.stringify({ username: select.dataset.memberRole, tenantRole: select.value }) });
+    await loadSystemUsers();
+  } catch (error) { window.alert(error.message); await loadSystemUsers(); }
+});
+document.querySelector('#tenantNameForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    const result = await apiRequest('/api/tenant', { method: 'PUT', body: JSON.stringify({ name: document.querySelector('#tenantNameInput').value }) });
+    AUTH_USER.tenantName = result.tenant.name;
+    els.currentRoleBadge.textContent = `${AUTH_USER.tenantName} · ${AUTH_USER.roleLabel}${AUTH_USER.platformAdmin ? " · 系統審核管理員" : ""}`;
+    document.querySelector('#tenantNameMessage').textContent = '帳戶名稱已更新';
+  } catch (error) { document.querySelector('#tenantNameMessage').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
 function getRoleLabel(role) {
-  return role === "supervisor" || role === "admin" ? "L1 Supervisor" : "L2 User";
+  return role === "supervisor" || role === "admin" ? "A1 帳戶管理者" : "帳戶成員";
 }
 
 function scopeStorageForUser(username) {
@@ -365,7 +407,7 @@ async function initializeAuthentication() {
     }
   }
   if (isSupervisor(result.user)) {
-    const results = await Promise.allSettled([loadSystemUsers(), loadAccountApplications(), loadPermissions()]);
+    const results = await Promise.allSettled([loadSystemUsers(), ...(result.user.platformAdmin ? [loadAccountApplications()] : []), loadPermissions()]);
     if (results.some((entry) => entry.status === "rejected")) {
       showFormMessage(els.createUserMessage, "部分管理資料暫時無法載入，請重新整理。", true);
     }
@@ -382,9 +424,10 @@ async function loadSystemUsers() {
         <div class="system-user-item">
           <div>
             <strong>${escapeHtml(user.displayName)} · ${escapeHtml(user.username)}</strong>
-            <span>${escapeHtml(getRoleLabel(user.role))} · ${user.enabled ? "啟用中" : "已停用"}${user.forcePasswordChange ? " · 待修改密碼" : ""}</span>
+            <span>${escapeHtml(user.roleLabel)} · ${user.enabled ? "啟用中" : "已停用"}${user.forcePasswordChange ? " · 待修改密碼" : ""}</span>
           </div>
           <div class="user-item-actions">
+            <select aria-label="${escapeHtml(user.username)} 的權限" data-member-role="${escapeHtml(user.username)}" ${user.username === CURRENT_USER || user.platformAdmin ? "disabled" : ""}>${[["owner", "A1 帳戶管理者"], ["editor", "A2 查看與操作"], ["viewer", "A3 僅可瀏覽"]].map(([value, label]) => `<option value="${value}" ${value === user.tenantRole ? "selected" : ""}>${label}</option>`).join("")}</select>
             <button class="text-button secondary-button" type="button" data-reset-user="${escapeHtml(user.username)}">重設密碼</button>
             <button class="text-button ${user.enabled ? "danger-button" : ""}" type="button" data-toggle-user="${escapeHtml(user.username)}" data-enabled="${user.enabled}">${user.enabled ? "停用" : "啟用"}</button>
             <button class="icon-button" type="button" data-delete-user="${escapeHtml(user.username)}" title="刪除帳號">×</button>
@@ -457,6 +500,7 @@ const permissionLabels = {
   alerts: "警示中心",
   audit: "系統報表",
   sources: "資料源",
+  strategy: "投資策略與組合",
   account: "帳號設定",
   accountManagement: "帳戶權限管理",
   permissionSettings: "操作功能權限設定",
@@ -466,14 +510,14 @@ const permissionLabels = {
 async function loadPermissions() {
   if (!isSupervisor()) return;
   const result = await apiRequest("/api/permissions");
-  els.permissionList.innerHTML = Object.entries(permissionLabels)
+  els.permissionList.innerHTML = Object.entries(permissionLabels).filter(([key]) => !["accountManagement", "permissionSettings", "accountApplications"].includes(key))
     .map(
       ([feature, label]) => `
         <label class="permission-row">
           <span>${escapeHtml(label)}</span>
           <select data-permission-feature="${escapeHtml(feature)}">
-            <option value="user" ${result.permissions[feature] === "user" ? "selected" : ""}>L2 User 以上</option>
-            <option value="supervisor" ${result.permissions[feature] === "supervisor" ? "selected" : ""}>僅 L1 Supervisor</option>
+            <option value="user" ${result.permissions[feature] === "user" ? "selected" : ""}>A1 / A2 / A3（依角色）</option>
+            <option value="supervisor" ${result.permissions[feature] === "supervisor" ? "selected" : ""}>僅 A1</option>
           </select>
         </label>
       `,
@@ -482,10 +526,10 @@ async function loadPermissions() {
 }
 
 async function loadAccountApplications() {
-  if (!isSupervisor()) return;
+  if (!AUTH_USER?.platformAdmin) return;
   const result = await apiRequest("/api/account-applications");
   const pending = result.applications.filter((item) => item.status === "pending");
-  els.applicationCount.textContent = `${pending.length} 筆待審`;
+  els.applicationCount.textContent = `${pending.length} 筆待審 · ${result.mailConfigured ? "寄信服務已設定" : "寄信服務未設定"}`;
   els.accountApplicationList.innerHTML = result.applications.length
     ? result.applications
         .map(
@@ -493,8 +537,11 @@ async function loadAccountApplications() {
             <div class="system-user-item">
               <div>
                 <strong>${escapeHtml(application.displayName)} · ${escapeHtml(application.username)}</strong>
+                <small>獨立帳戶：${escapeHtml(application.accountName)}</small>
                 <span>${application.status === "pending" ? "待審核" : application.status === "approved" ? "已同意" : "已拒絕"} · ${escapeHtml(formatDate(new Date(application.requestedAt)))}</span>
                 ${application.note ? `<small>${escapeHtml(application.note)}</small>` : ""}
+                <small>申請編號 ${escapeHtml(application.id)}</small>
+                ${application.decidedAt ? `<small>審核：${escapeHtml(application.decidedBy)} · ${escapeHtml(formatDate(new Date(application.decidedAt)))} · ${escapeHtml(application.decisionReason || "未填理由")}</small>` : ""}
               </div>
               ${
                 application.status === "pending"
@@ -510,14 +557,24 @@ async function loadAccountApplications() {
         .join("")
     : `<div class="empty-state">目前沒有帳號申請。</div>`;
 
+  const mailLabels = { queued: "待寄", sending: "寄送中", accepted: "寄信服務已受理（不等於已送達）", failed: "寄送失敗" };
+  els.accountApplicationList.insertAdjacentHTML("beforeend", `<h3>通知紀錄</h3>${(result.notifications || []).slice().reverse().map((m) => `<div class="system-user-item"><div><strong>${escapeHtml(m.to)}</strong><small>${escapeHtml(m.applicationId || "舊通知")} · ${escapeHtml(mailLabels[m.status] || m.status)} · 嘗試 ${Number(m.attempts || 0)} 次</small><small>${escapeHtml(m.createdAt)} ${escapeHtml(m.error || "")}</small></div>${m.status !== "accepted" ? `<button type="button" class="text-button" data-retry-mail="${escapeHtml(m.id)}" ${result.mailConfigured ? "" : "disabled"}>重試寄送</button>` : ""}</div>`).join("") || "<p>尚無通知</p>"}`);
+  els.accountApplicationList.querySelectorAll("[data-retry-mail]").forEach((button) => button.onclick = async () => {
+    button.disabled = true;
+    try { await apiRequest("/api/notifications/retry", { method: "POST", body: JSON.stringify({ id: button.dataset.retryMail }) }); await loadAccountApplications(); }
+    catch (error) { window.alert(error.message); button.disabled = false; }
+  });
   document.querySelectorAll("[data-application-decision]").forEach((button) => {
     button.addEventListener("click", async () => {
       const decision = button.dataset.applicationDecision;
       const id = button.dataset.applicationId;
+      const reason = window.prompt(decision === "reject" ? "請填寫拒絕理由（必填）" : "審核備註（可留空）");
+      if (reason === null || (decision === "reject" && !reason.trim())) return;
+      button.disabled = true;
       try {
         const result = await apiRequest("/api/account-applications/decision", {
           method: "POST",
-          body: JSON.stringify({ id, decision }),
+          body: JSON.stringify({ id, decision, reason }),
         });
         recordAudit("change", decision === "approve" ? "同意帳號申請" : "拒絕帳號申請", result.application.username, `Supervisor ${decision === "approve" ? "同意" : "拒絕"}帳號申請。`);
         await loadAccountApplications();
@@ -659,19 +716,18 @@ function normalizeExternalUrl(value) {
 }
 
 function getFilteredAssets() {
-  const term = els.search.value.trim().toLowerCase();
+  const matches = els.search.value.trim() ? new Set(PortfolioMath.search(assets.map((a) => ({ ...a, categoryLabel: categories[a.category] })), els.search.value).map((a) => a.symbol)) : null;
   return assets.filter((asset) => {
     const categoryMatch = activeCategory === "all" || asset.category === activeCategory;
-    const termMatch = [asset.symbol, asset.name, asset.market, categories[asset.category]]
-      .join(" ")
-      .toLowerCase()
-      .includes(term);
+    const termMatch = !matches || matches.has(asset.symbol);
     return categoryMatch && termMatch;
   });
 }
 
 function renderRows() {
   els.rows.innerHTML = "";
+  document.querySelector("#searchResultStatus").textContent = `${getFilteredAssets().length} 筆監控標的${els.search.value.trim() ? ` · ${els.search.value.trim()}` : ""}`;
+  if (!getFilteredAssets().length) els.rows.innerHTML = '<tr><td colspan="6">沒有符合的監控標的</td></tr>';
   getFilteredAssets().forEach((asset) => {
     const forecast = getForecast(asset);
     const row = document.createElement("tr");
@@ -1676,6 +1732,17 @@ document.querySelectorAll(".segment").forEach((button) => {
 });
 
 els.search.addEventListener("input", renderRows);
+function submitMarketSearch() {
+  activeCategory = "all";
+  document.querySelectorAll(".segment").forEach((button) => button.classList.toggle("active", button.dataset.category === "all"));
+  renderRows();
+  document.querySelector("#assets").scrollIntoView({ block: "start" });
+  recordAudit("view", "搜尋市場標的", "即時行情", `搜尋關鍵字「${els.search.value.trim()}」。`);
+}
+els.search.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); submitMarketSearch(); }
+});
+document.querySelector("#searchSubmit").addEventListener("click", submitMarketSearch);
 els.search.addEventListener("change", () => {
   if (els.search.value.trim()) {
     recordAudit("view", "搜尋市場標的", "即時行情", `搜尋關鍵字「${els.search.value.trim()}」。`);
@@ -2018,7 +2085,7 @@ els.createUserForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         username: els.newUsername.value.trim(),
         displayName: els.newDisplayName.value.trim(),
-        role: els.newUserRole.value,
+        tenantRole: els.newUserRole.value,
         password: els.newUserPassword.value,
       }),
     });
@@ -2097,7 +2164,7 @@ async function initializeApplication() {
     }
     const workspace = await loadWorkspace();
     loadLayoutState();
-    if (!workspace.groups && !investmentGroups.length) seedInvestmentGroups();
+    if (AUTH_USER.tenantRole !== "viewer" && !workspace.groups && !investmentGroups.length) seedInvestmentGroups();
     if (!workspace.groups && investmentGroups.length) queueWorkspaceSave("groups", investmentGroups);
     if (!workspace.alerts && alerts.length) queueWorkspaceSave("alerts", alerts);
     if (!workspace.annotations && annotations.length) queueWorkspaceSave("annotations", annotations);
@@ -2106,6 +2173,7 @@ async function initializeApplication() {
     recordAudit("system", "開啟系統", "Global Market Radar", "使用者進入市場監控儀表板。");
     renderAll();
     if (window.initializeStrategy) window.initializeStrategy(workspace.strategy?.value);
+    applyReadOnlyControls();
     setInterval(updatePrices, 2000);
   } catch (error) {
     console.error(error);

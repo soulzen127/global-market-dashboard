@@ -6,6 +6,7 @@
 !vercel.json
 !server.js
 !storage.js
+!market-data.js
 !index.html
 !login.html
 !login.js
@@ -15,3 +16,5 @@
 !strategy.js
 !strategy.css
 !portfolio.js
+!responsive.css
+!responsive.js

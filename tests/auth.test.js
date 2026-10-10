@@ -11,6 +11,8 @@ test("authentication, persistence, authorization and protected files", async (t)
   process.env.DATA_ROOT = root;
   process.env.INITIAL_SUPERVISOR_PASSWORD = crypto.randomBytes(18).toString("base64") + "Aa1!";
   delete process.env.DATABASE_URL;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.MAIL_FROM;
   const email = "soulzen127@gmail.com";
   let password = process.env.INITIAL_SUPERVISOR_PASSWORD;
   const { handler } = require("../server");
@@ -26,8 +28,13 @@ test("authentication, persistence, authorization and protected files", async (t)
   };
   assert.equal((await request("/")).status, 302);
   assert.equal((await request("/api/session")).status, 401);
+  assert.equal((await request("/api/instruments?q=2330")).status, 401);
   let cookie = await login(email, password);
   assert.equal((await request("/", "GET", null, cookie)).status, 200);
+  for (const file of ["/responsive.css", "/responsive.js"]) {
+    assert.equal((await request(file)).status, 302, `${file} requires login`);
+    assert.equal((await request(file, "GET", null, cookie)).status, 200, `${file} is available after login`);
+  }
   for (const file of ["/server.js", "/api/index.js", "/.data/users.json", "/global-market-dashboard-deploy.zip", "/integration/README.md"]) {
     assert.ok([403, 404, 405].includes((await request(file, "GET", null, cookie)).status), file);
   }
@@ -53,17 +60,57 @@ test("authentication, persistence, authorization and protected files", async (t)
   assert.equal((await request("/api/account-applications", "POST", { username: "reviewer@example.com", displayName: "Reviewer", password: userPassword })).status, 202);
   assert.equal((await request("/api/login", "POST", { username: "reviewer@example.com", password: userPassword })).status, 401);
   const applications = await (await request("/api/account-applications", "GET", null, cookie)).json();
+  assert.equal(applications.mailConfigured, false);
+  assert.equal(applications.notifications[0].status, "queued");
+  assert.ok(!JSON.stringify(applications).includes("passwordRecord"));
+  assert.equal((await request("/api/account-applications/decision", "POST", { id: applications.applications[0].id, decision: "typo" }, cookie)).status, 400);
   assert.equal((await request("/api/account-applications/decision", "POST", { id: applications.applications[0].id, decision: "approve" }, cookie)).status, 200);
-  const userCookie = await login("reviewer@example.com", userPassword);
+  const ownerCookie = await login("reviewer@example.com", userPassword);
+  assert.deepEqual((await (await request("/api/workspace", "GET", null, ownerCookie)).json()).data, {});
+  await request("/api/users", "POST", { username: "member@example.com", password: userPassword, tenantRole: "editor" }, cookie);
+  let userCookie = await login("member@example.com", userPassword);
+  const memberChanged = await request("/api/change-password", "POST", { currentPassword: userPassword, newPassword: userPassword + "X" }, userCookie);
+  userCookie = memberChanged.headers.get("set-cookie").split(";")[0];
+  const approved = await (await request("/api/account-applications", "GET", null, cookie)).json();
+  assert.equal(approved.applications[0].history.at(-1).action, "approved");
+  assert.equal(approved.notifications.length, 2);
+  assert.equal((await request("/api/notifications/retry", "POST", { id: approved.notifications[0].id }, userCookie)).status, 403);
+  assert.equal((await request("/api/account-applications", "GET", null, userCookie)).status, 403);
+  await request("/api/account-applications", "POST", { username: "rejected@example.com", password: userPassword });
+  const rejected = (await (await request("/api/account-applications", "GET", null, cookie)).json()).applications.find((a) => a.username === "rejected@example.com");
+  assert.equal((await request("/api/account-applications/decision", "POST", { id: rejected.id, decision: "reject" }, cookie)).status, 400);
+  assert.equal((await request("/api/account-applications/decision", "POST", { id: rejected.id, decision: "reject", reason: "Test rejection" }, cookie)).status, 200);
+  assert.equal((await request("/api/login", "POST", { username: rejected.username, password: userPassword })).status, 401);
+  const originalFetch = global.fetch;
+  let sends = 0;
+  process.env.RESEND_API_KEY = "test-only";
+  process.env.MAIL_FROM = "test@example.com";
+  global.fetch = (url, options) => {
+    if (url !== "https://api.resend.com/emails") return originalFetch(url, options);
+    sends++;
+    assert.equal(options.headers["Idempotency-Key"], approved.notifications[0].id);
+    return Promise.resolve(new Response(JSON.stringify({ id: "test-provider-id" }), { status: 200 }));
+  };
+  try {
+    for (let i = 0; i < 2; i++) assert.equal((await request("/api/notifications/retry", "POST", { id: approved.notifications[0].id }, cookie)).status, 202);
+    assert.equal(sends, 1, "accepted notification is not resent");
+    const notified = await (await request("/api/account-applications", "GET", null, cookie)).json();
+    assert.equal(notified.notifications[0].status, "accepted");
+    assert.equal(notified.notifications[0].providerId, "test-provider-id");
+    global.fetch = (url, options) => url === "https://api.resend.com/emails" ? Promise.resolve(new Response("{}", { status: 503 })) : originalFetch(url, options);
+    await request("/api/notifications/retry", "POST", { id: approved.notifications[1].id }, cookie);
+    const failed = await (await request("/api/account-applications", "GET", null, cookie)).json();
+    assert.equal(failed.notifications[1].status, "failed");
+  } finally { global.fetch = originalFetch; delete process.env.RESEND_API_KEY; delete process.env.MAIL_FROM; }
   assert.equal((await request("/api/users", "GET", null, userCookie)).status, 403);
   assert.equal((await request("/api/permissions", "POST", { permissions: { permissionSettings: "user", alerts: "supervisor" } }, cookie)).status, 200);
   assert.equal((await request("/api/permissions", "POST", { permissions: {} }, userCookie)).status, 403);
   assert.equal((await request("/api/workspace", "PUT", { key: "alerts", value: [], version: 0 }, userCookie)).status, 403);
-  assert.deepEqual((await (await request("/api/workspace", "GET", null, userCookie)).json()).data, {});
-  assert.equal((await request("/api/users/status", "POST", { username: "reviewer@example.com", enabled: false }, cookie)).status, 200);
+  assert.deepEqual((await (await request("/api/workspace", "GET", null, userCookie)).json()).data.groups.value, value);
+  assert.equal((await request("/api/users/status", "POST", { username: "member@example.com", enabled: false }, cookie)).status, 200);
   assert.equal((await request("/api/session", "GET", null, userCookie)).status, 401);
   const audit = await (await request("/api/audit", "GET", null, cookie)).json();
   assert.ok(audit.records.length > 0);
   assert.ok(!JSON.stringify(audit).includes(password));
-  assert.ok(fs.existsSync(path.join(root, "workspaces.json")));
+  assert.ok(fs.existsSync(path.join(root, "tenant-workspaces.json")));
 });

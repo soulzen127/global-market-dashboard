@@ -138,6 +138,7 @@ requestForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         username: requestForm.requestUsername.value.trim(),
         displayName: requestForm.requestDisplayName.value.trim(),
+        accountName: requestForm.accountName.value.trim(),
         password: requestForm.requestPassword.value,
         note: requestForm.requestNote.value.trim(),
       }),
@@ -145,7 +146,7 @@ requestForm.addEventListener("submit", async (event) => {
     const result = await readJsonResponse(response);
     if (!response.ok) throw new Error(errorTranslations[result.error] || result.error || "申請送出失敗。");
     requestForm.reset();
-    requestMessage.textContent = "帳號申請已送出，等待 L1 Supervisor 審核。通知郵件仍待寄送。";
+    requestMessage.textContent = `申請已受理，編號 ${result.application.id}。等待管理員同意後才能登入。${result.notification?.configured ? "通知已排入寄送流程。" : "寄信服務尚未設定；管理員可在站內查看待審申請。"}`;
     requestMessage.classList.add("success");
     requestMessage.hidden = false;
   } catch (error) {

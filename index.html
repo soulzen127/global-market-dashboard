@@ -2,14 +2,21 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Global Market Radar</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="strategy.css" />
+    <link rel="stylesheet" href="responsive.css" />
   </head>
   <body>
+    <header class="mobile-bar">
+      <button id="mobileNavigation" type="button" aria-label="開啟導覽" title="開啟導覽" aria-controls="navigationRail" aria-expanded="false">☰</button>
+      <strong>全球市場雷達</strong>
+      <button id="mobileNews" type="button" aria-controls="marketNewsRail" aria-expanded="false">新聞</button>
+    </header>
+    <div class="drawer-backdrop" hidden></div>
     <div class="app-shell">
-      <aside class="sidebar" aria-label="主要導覽">
+      <aside id="navigationRail" class="sidebar" aria-label="主要導覽">
         <div class="sidebar-heading">
           <div class="brand">
             <div class="brand-mark">GM</div>
@@ -50,9 +57,9 @@
           </div>
           <div class="top-actions">
             <label class="search-box" for="searchInput">
-              <span>⌕</span>
-              <input id="searchInput" type="search" placeholder="搜尋代號、名稱或市場" />
+              <input id="searchInput" type="search" enterkeyhint="search" aria-label="搜尋代號、名稱或市場" placeholder="搜尋代號、名稱或市場" />
             </label>
+            <button id="searchSubmit" type="button" class="icon-button" title="搜尋" aria-label="搜尋">⌕</button>
             <button id="exportBtn" class="icon-button" title="匯出目前報表">⇩</button>
             <div class="user-control">
               <button id="userMenuButton" class="user-button" type="button" title="帳號設定">
@@ -63,6 +70,7 @@
             </div>
           </div>
         </header>
+        <p id="searchResultStatus" role="status" aria-live="polite"></p>
 
         <div id="passwordWarning" class="security-warning" hidden>
           <div>
@@ -499,6 +507,12 @@
             </form>
 
             <div id="adminUserPanel" class="admin-user-panel" hidden>
+              <form id="tenantNameForm" class="account-form">
+                <h3>帳戶空間</h3>
+                <label>帳戶名稱<input id="tenantNameInput" maxlength="100" required></label>
+                <button class="text-button" type="submit">儲存名稱</button>
+                <p id="tenantNameMessage" role="status"></p>
+              </form>
               <form id="createUserForm" class="account-form">
                 <div>
                   <h3>建立使用者</h3>
@@ -515,8 +529,9 @@
                 <label>
                   角色
                   <select id="newUserRole">
-                    <option value="user">L2 使用者 User</option>
-                    <option value="supervisor">L1 最高權限 Supervisor</option>
+                    <option value="editor">A2 查看與操作</option>
+                    <option value="viewer">A3 僅可瀏覽</option>
+                    <option value="owner">A1 帳戶管理者</option>
                   </select>
                 </label>
                 <label>
@@ -530,7 +545,7 @@
               <div class="user-list-panel">
                 <div class="subsection-heading">
                   <div>
-                    <h3>系統使用者</h3>
+                    <h3>本帳戶使用者</h3>
                     <span id="userCount">0 個帳號</span>
                   </div>
                   <button id="refreshUsersButton" class="text-button secondary-button" type="button">重新整理</button>
@@ -541,7 +556,7 @@
               <div class="user-list-panel">
                 <div class="subsection-heading">
                   <div>
-                    <h3>帳號申請審核</h3>
+                    <h3>第一層帳戶申請審核</h3>
                     <span id="applicationCount">0 筆待審</span>
                   </div>
                   <button id="refreshApplicationsButton" class="text-button secondary-button" type="button">重新整理</button>
@@ -552,7 +567,7 @@
               <form id="permissionForm" class="account-form permission-form">
                 <div>
                   <h3>操作功能權限設定</h3>
-                  <p>只有 L1 Supervisor 可以調整各功能開放給 L1 或 L2。</p>
+                  <p>A1 可設定本帳戶的功能存取；A3 永遠不能修改資料。</p>
                 </div>
                 <div id="permissionList" class="permission-list"></div>
                 <p id="permissionMessage" class="form-message" hidden></p>
@@ -623,5 +638,6 @@
     <script src="portfolio.js"></script>
     <script src="strategy.js"></script>
     <script src="app.js"></script>
+    <script src="responsive.js"></script>
   </body>
 </html>
